@@ -1,0 +1,29 @@
+services:
+  ninjarmm-mcp:
+    image: timothiasthegreat/ninjarmm-mcp:latest
+    container_name: ninjarmm-mcp
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      NINJA_BASE_URL: ${NINJA_BASE_URL}
+      NINJA_BEARER_TOKEN: ${NINJA_BEARER_TOKEN:-}
+      NINJA_SESSION_KEY: ${NINJA_SESSION_KEY:-}
+      NINJA_OAUTH_TOKEN_URL: ${NINJA_OAUTH_TOKEN_URL:-}
+      NINJA_OAUTH_CLIENT_ID: ${NINJA_OAUTH_CLIENT_ID:-}
+      NINJA_OAUTH_CLIENT_SECRET: ${NINJA_OAUTH_CLIENT_SECRET:-}
+      NINJA_OAUTH_SCOPE: ${NINJA_OAUTH_SCOPE:-}
+      NINJA_OAUTH_AUDIENCE: ${NINJA_OAUTH_AUDIENCE:-}
+      NINJA_HTTP_TIMEOUT_MS: ${NINJA_HTTP_TIMEOUT_MS:-30000}
+      NINJA_HTTP_RETRY_COUNT: ${NINJA_HTTP_RETRY_COUNT:-2}
+      NINJA_DEFAULT_PAGE_SIZE: ${NINJA_DEFAULT_PAGE_SIZE:-100}
+      NINJA_MAX_PAGE_SIZE: ${NINJA_MAX_PAGE_SIZE:-1000}
+      PORT: ${PORT:-3000}
+    ports:
+      - "3000:3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
