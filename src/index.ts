@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { loadConfig } from "./config.js";
-import { NinjaClient } from "./ninja-client.js";
+import { NinjaApiError, NinjaClient } from "./ninja-client.js";
 import { registerReadOnlyTools } from "./tools.js";
 
 const config = loadConfig(process.env);
@@ -20,8 +20,67 @@ type SessionRuntime = {
 
 const sessions = new Map<string, SessionRuntime>();
 
-app.get("/healthz", (_req, res) => {
-  res.status(200).json({ status: "ok" });
+function getAuthMode(): string {
+  if (config.ninjaBearerToken) {
+    return "bearer";
+  }
+
+  if (config.ninjaSessionKey) {
+    return "session_key";
+  }
+
+  if (config.ninjaOauthTokenUrl && config.ninjaOauthClientId && config.ninjaOauthClientSecret) {
+    return "oauth_client_credentials";
+  }
+
+  return "unknown";
+}
+
+function getSanitizedTokenUrlDetails(): { host: string; path: string } | undefined {
+  if (!config.ninjaOauthTokenUrl) {
+    return undefined;
+  }
+
+  try {
+    const tokenUrl = new URL(config.ninjaOauthTokenUrl);
+    return {
+      host: tokenUrl.host,
+      path: tokenUrl.pathname,
+    };
+  } catch {
+    return {
+      host: "invalid-url",
+      path: "invalid-url",
+    };
+  }
+}
+
+app.get("/healthz", async (req, res) => {
+  const checkAuth = ["1", "true", "yes"].includes(String(req.query.checkAuth ?? "").toLowerCase());
+
+  if (!checkAuth) {
+    res.status(200).json({ status: "ok" });
+    return;
+  }
+
+  try {
+    await ninjaClient.get("/v2/organizations", { pageSize: 1 }, { logOauthRequestBody: true });
+    res.status(200).json({ status: "ok", authCheck: "passed" });
+  } catch (error) {
+    if (error instanceof NinjaApiError) {
+      res.status(503).json({
+        status: "error",
+        authCheck: "failed",
+        message: error.message,
+        ninjaStatus: error.status,
+        path: error.path,
+      });
+      return;
+    }
+
+    const message = error instanceof Error ? error.message : "Unknown auth check error";
+    res.status(503).json({ status: "error", authCheck: "failed", message });
+  }
 });
 
 app.all("/mcp", async (req, res) => {
@@ -94,4 +153,18 @@ app.all("/mcp", async (req, res) => {
 
 app.listen(config.port, "0.0.0.0", () => {
   console.log(`Ninja MCP server listening on 0.0.0.0:${config.port}`);
+
+  const oauthTokenUrl = getSanitizedTokenUrlDetails();
+  const diagnostics = {
+    authMode: getAuthMode(),
+    hasBearerToken: Boolean(config.ninjaBearerToken),
+    hasSessionKey: Boolean(config.ninjaSessionKey),
+    hasOauthTokenUrl: Boolean(config.ninjaOauthTokenUrl),
+    hasOauthClientId: Boolean(config.ninjaOauthClientId),
+    hasOauthClientSecret: Boolean(config.ninjaOauthClientSecret),
+    oauthTokenHost: oauthTokenUrl?.host,
+    oauthTokenPath: oauthTokenUrl?.path,
+  };
+
+  console.log(`Auth diagnostics ${JSON.stringify(diagnostics)}`);
 });

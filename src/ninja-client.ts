@@ -4,6 +4,10 @@ export type Primitive = string | number | boolean;
 export type QueryValue = Primitive | Primitive[] | undefined | null;
 export type QueryParams = Record<string, QueryValue>;
 
+type RequestOptions = {
+  logOauthRequestBody?: boolean;
+};
+
 export class NinjaApiError extends Error {
   readonly status: number;
   readonly path: string;
@@ -47,11 +51,16 @@ export class NinjaClient {
     this.retryCount = config.httpRetryCount;
   }
 
-  async get(path: string, query: QueryParams = {}): Promise<unknown> {
-    return this.request("GET", path, query);
+  async get(path: string, query: QueryParams = {}, options: RequestOptions = {}): Promise<unknown> {
+    return this.request("GET", path, query, options);
   }
 
-  private async request(method: "GET", path: string, query: QueryParams): Promise<unknown> {
+  private async request(
+    method: "GET",
+    path: string,
+    query: QueryParams,
+    options: RequestOptions,
+  ): Promise<unknown> {
     const url = new URL(path, this.baseUrl);
 
     for (const [key, value] of Object.entries(query)) {
@@ -82,7 +91,7 @@ export class NinjaClient {
           Accept: "application/json",
         };
 
-        const bearerToken = await this.getBearerToken();
+        const bearerToken = await this.getBearerToken(options);
 
         if (bearerToken) {
           headers.Authorization = `Bearer ${bearerToken}`;
@@ -103,6 +112,19 @@ export class NinjaClient {
         if (!response.ok) {
           const responseBody = await parseResponseBody(response);
           const retryable = response.status >= 500 || response.status === 429;
+
+          console.error(
+            "Ninja API non-success response",
+            JSON.stringify({
+              method,
+              path,
+              status: response.status,
+              retryable,
+              attempt,
+              maxAttempts: this.retryCount,
+              details: toLoggableDetails(responseBody),
+            }),
+          );
 
           if (response.status === 401 && this.isOauthEnabled() && attempt < this.retryCount) {
             this.oauthAccessToken = undefined;
@@ -134,6 +156,17 @@ export class NinjaClient {
         clearTimeout(timeout);
         lastError = error;
 
+        console.error(
+          "Ninja API request error",
+          JSON.stringify({
+            method,
+            path,
+            attempt,
+            maxAttempts: this.retryCount,
+            error: toLoggableDetails(toErrorDetails(error)),
+          }),
+        );
+
         if (error instanceof NinjaApiError) {
           throw error;
         }
@@ -158,7 +191,7 @@ export class NinjaClient {
     return Boolean(this.oauthTokenUrl && this.oauthClientId && this.oauthClientSecret);
   }
 
-  private async getBearerToken(): Promise<string | undefined> {
+  private async getBearerToken(options: RequestOptions): Promise<string | undefined> {
     if (this.staticBearerToken) {
       return this.staticBearerToken;
     }
@@ -175,11 +208,11 @@ export class NinjaClient {
       return this.oauthAccessToken;
     }
 
-    await this.refreshOauthToken();
+    await this.refreshOauthToken(options);
     return this.oauthAccessToken;
   }
 
-  private async refreshOauthToken(): Promise<void> {
+  private async refreshOauthToken(options: RequestOptions): Promise<void> {
     const tokenUrl = this.oauthTokenUrl;
     const clientId = this.oauthClientId;
     const clientSecret = this.oauthClientSecret;
@@ -193,6 +226,7 @@ export class NinjaClient {
     for (let attempt = 0; attempt <= this.retryCount; attempt += 1) {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
+      let sanitizedRequestBody: Record<string, string> | undefined;
 
       try {
         const body = new URLSearchParams();
@@ -207,6 +241,8 @@ export class NinjaClient {
         if (this.oauthAudience) {
           body.set("audience", this.oauthAudience);
         }
+
+        sanitizedRequestBody = getSanitizedOauthRequestBody(body);
 
         const response = await fetch(tokenUrl, {
           method: "POST",
@@ -223,6 +259,20 @@ export class NinjaClient {
         if (!response.ok) {
           const details = await parseResponseBody(response);
           const retryable = response.status >= 500 || response.status === 429;
+
+          console.error(
+            "Ninja OAuth token non-success response",
+            JSON.stringify({
+              status: response.status,
+              retryable,
+              attempt,
+              maxAttempts: this.retryCount,
+              tokenHost: safeTokenHost(tokenUrl),
+              tokenPath: safeTokenPath(tokenUrl),
+              requestBody: options.logOauthRequestBody ? sanitizedRequestBody : undefined,
+              details: toLoggableDetails(details),
+            }),
+          );
 
           if (retryable && attempt < this.retryCount) {
             await sleep(200 * (attempt + 1));
@@ -263,6 +313,18 @@ export class NinjaClient {
       } catch (error) {
         clearTimeout(timeout);
         lastError = error;
+
+        console.error(
+          "Ninja OAuth token request error",
+          JSON.stringify({
+            attempt,
+            maxAttempts: this.retryCount,
+            tokenHost: safeTokenHost(tokenUrl),
+            tokenPath: safeTokenPath(tokenUrl),
+            requestBody: options.logOauthRequestBody ? sanitizedRequestBody : undefined,
+            error: toLoggableDetails(toErrorDetails(error)),
+          }),
+        );
 
         if (error instanceof NinjaApiError) {
           throw error;
@@ -314,6 +376,57 @@ function toErrorDetails(error: unknown): unknown {
   }
 
   return error;
+}
+
+function toLoggableDetails(details: unknown): unknown {
+  const maxLength = 2000;
+  let serialized: string;
+
+  if (typeof details === "string") {
+    serialized = details;
+  } else {
+    try {
+      serialized = JSON.stringify(details);
+    } catch {
+      serialized = String(details);
+    }
+  }
+
+  if (serialized.length <= maxLength) {
+    return details;
+  }
+
+  return {
+    truncated: true,
+    maxLength,
+    preview: serialized.slice(0, maxLength),
+  };
+}
+
+function getSanitizedOauthRequestBody(body: URLSearchParams): Record<string, string> {
+  return {
+    grant_type: body.get("grant_type") ?? "",
+    client_id: body.get("client_id") ?? "",
+    client_secret: "[REDACTED]",
+    scope: body.get("scope") ?? "",
+    audience: body.get("audience") ?? "",
+  };
+}
+
+function safeTokenHost(tokenUrl: string): string {
+  try {
+    return new URL(tokenUrl).host;
+  } catch {
+    return "invalid-url";
+  }
+}
+
+function safeTokenPath(tokenUrl: string): string {
+  try {
+    return new URL(tokenUrl).pathname;
+  } catch {
+    return "invalid-url";
+  }
 }
 
 function sleep(ms: number): Promise<void> {

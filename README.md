@@ -6,6 +6,7 @@ Read-only MCP server for NinjaRMM or NinjaOne, optimized for Docker Compose depl
 
 - MCP endpoint: `/mcp` (Streamable HTTP transport)
 - Health endpoint: `/healthz`
+- Optional authenticated health check: `/healthz?checkAuth=true` (verifies Ninja auth path, including OAuth token fetch when OAuth is configured)
 
 ## Docker Compose deployment
 
@@ -108,6 +109,7 @@ After container start:
 1. Confirm service is running: `docker compose ps`
 2. Confirm health endpoint responds on port `3000`
 3. Connect MCP client to `http://<host>:3000/mcp`
+4. Optional deep auth verification: `curl "http://<host>:3000/healthz?checkAuth=true"`
 
 ## Security notes
 
