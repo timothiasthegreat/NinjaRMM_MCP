@@ -1,87 +1,63 @@
-# NinjaRMM MCP Server (Docker + Remote Agents)
+# NinjaRMM MCP Server
 
-This project provides a read-only MCP server for NinjaRMM/NinjaOne APIs.
-It is designed to run in Docker and be reachable by remote MCP clients over HTTP.
+Read-only MCP server for NinjaRMM or NinjaOne, optimized for Docker Compose deployment and remote MCP clients.
 
-## Features
+## What this server exposes
 
-- Streamable HTTP MCP endpoint at `/mcp`
-- Health endpoint at `/healthz`
-- Read-only tools:
-  - `list_organizations`
-  - `list_organization_devices`
-  - `get_device`
-  - `run_query_report`
-  - `get_ticket`
-- API authentication via bearer token, OAuth2 client credentials, and/or `sessionKey` cookie
-- Retry/timeout controls for upstream Ninja API calls
+- MCP endpoint: `/mcp` (Streamable HTTP transport)
+- Health endpoint: `/healthz`
 
-## Environment variables
+## Docker Compose deployment
 
-Copy `.env.example` to `.env` and configure:
+### Option 1: Build locally
 
-- `NINJA_BASE_URL` (required)
-- Auth mode A (static token): `NINJA_BEARER_TOKEN`
-- Auth mode B (session cookie): `NINJA_SESSION_KEY`
-- Auth mode C (OAuth2 client credentials):
-  - `NINJA_OAUTH_TOKEN_URL`
-  - `NINJA_OAUTH_CLIENT_ID`
-  - `NINJA_OAUTH_CLIENT_SECRET`
-  - Optional: `NINJA_OAUTH_SCOPE`, `NINJA_OAUTH_AUDIENCE`
-- `NINJA_HTTP_TIMEOUT_MS` (optional)
-- `NINJA_HTTP_RETRY_COUNT` (optional)
-- `NINJA_DEFAULT_PAGE_SIZE` (optional)
-- `NINJA_MAX_PAGE_SIZE` (optional)
-- `PORT` (optional, default `3000`)
-
-At least one auth mode must be configured.
-
-## Local development
-
-```bash
-npm install
-npm run dev
-```
-
-## Build and run (Docker)
-
-```bash
-docker build -t ninjarmm-mcp:latest .
-docker run --rm -p 3000:3000 --env-file .env ninjarmm-mcp:latest
-```
-
-Or with Compose:
+Use [docker-compose.yml](docker-compose.yml) when deploying from this source repository.
 
 ```bash
 docker compose up -d --build
 ```
 
-## Deployment compose example
+### Option 2: Deploy from published image
 
-For host deployments that pull a prebuilt image instead of building locally, use [docker-compose.deploy.example.yml](docker-compose.deploy.example.yml).
-
-1. Update the image value in [docker-compose.deploy.example.yml](docker-compose.deploy.example.yml) to your published image tag.
-2. Ensure your `.env` file is present on the target host.
-3. Start the service:
+Use [docker-compose.deploy.example.yml](docker-compose.deploy.example.yml) when deploying from a prebuilt image.
 
 ```bash
 docker compose -f docker-compose.deploy.example.yml up -d
 ```
 
-## Remote agent access
+## Environment variables
 
-Your remote agents should use:
+Create `.env` from [.env.example](.env.example), then set values.
 
-- MCP URL: `http://<host>:3000/mcp`
-- Health check: `http://<host>:3000/healthz`
+Required:
 
-For internet-facing deployments, place this container behind a reverse proxy with TLS and access control.
+- `NINJA_BASE_URL`
 
-## MCP connection config examples (mcp.json)
+Choose at least one auth mode:
 
-The server uses Streamable HTTP transport. Most MCP clients can connect with an `mcp.json` entry that points to your `/mcp` URL.
+- Static bearer token: `NINJA_BEARER_TOKEN`
+- Session key cookie: `NINJA_SESSION_KEY`
+- OAuth2 client credentials:
+- `NINJA_OAUTH_TOKEN_URL`
+- `NINJA_OAUTH_CLIENT_ID`
+- `NINJA_OAUTH_CLIENT_SECRET`
 
-### Claude-style mcp.json
+Optional OAuth fields:
+
+- `NINJA_OAUTH_SCOPE`
+- `NINJA_OAUTH_AUDIENCE`
+
+Optional runtime tuning:
+
+- `NINJA_HTTP_TIMEOUT_MS`
+- `NINJA_HTTP_RETRY_COUNT`
+- `NINJA_DEFAULT_PAGE_SIZE`
+- `NINJA_MAX_PAGE_SIZE`
+- `PORT` (default `3000`)
+
+## Generic MCP client config
+
+Most MCP clients support an `mcp.json` with a server entry like this:
 
 ```json
 {
@@ -94,22 +70,22 @@ The server uses Streamable HTTP transport. Most MCP clients can connect with an 
 }
 ```
 
-### LM Studio mcp.json
+For remote deployments, replace `localhost` with your host name or IP.
 
-```json
-{
-  "mcpServers": {
-    "ninjarmm": {
-      "transport": "streamable_http",
-      "url": "http://localhost:3000/mcp"
-    }
-  }
-}
-```
+## Server description for AI agents
 
-### mcp.json with gateway auth header
+Use the following description when configuring this MCP server in AI agent platforms:
 
-If you put the MCP server behind a reverse proxy or gateway that requires an API key or bearer token, include headers:
+This is a read-only NinjaRMM or NinjaOne MCP server for IT operations and endpoint visibility.
+It connects to the Ninja Public API v2 and exposes inventory and reporting tools over MCP Streamable HTTP.
+The server endpoint is /mcp and health endpoint is /healthz.
+Authentication to Ninja is provided by environment variables using one of these modes: bearer token, session key, or OAuth2 client credentials.
+This server is intended for safe retrieval workflows such as listing organizations, listing devices, getting device details, reading tickets, and running supported query reports.
+Do not use this server for mutating actions because this implementation is read-only by design.
+
+## Generic MCP config with gateway auth
+
+If your reverse proxy or API gateway requires auth, add headers:
 
 ```json
 {
@@ -125,47 +101,16 @@ If you put the MCP server behind a reverse proxy or gateway that requires an API
 }
 ```
 
-Notes:
+## Quick verification
 
-- Replace `localhost` with your Docker host name or IP for remote clients.
-- Keep TLS enabled for non-local access.
-- If your MCP client uses a different key than `mcpServers`, adapt the same server object fields (`transport`, `url`, optional `headers`).
+After container start:
 
-## Tool details
-
-### list_organizations
-Inputs:
-- `pageSize` (optional number)
-- `after` (optional number)
-
-### list_organization_devices
-Inputs:
-- `organizationId` (number)
-- `pageSize` (optional number)
-- `after` (optional number)
-
-### get_device
-Inputs:
-- `deviceId` (number)
-
-### run_query_report
-Inputs:
-- `report` (enum): `antivirus_status`, `device_health`, `disks`, `os_patches`, `software`, `software_patches`, `volumes`, `windows_services`
-- `pageSize` (optional number)
-- `cursor` (optional string)
-- `organizationIds` (optional number[])
-
-### get_ticket
-Inputs:
-- `ticketId` (number)
+1. Confirm service is running: `docker compose ps`
+2. Confirm health endpoint responds on port `3000`
+3. Connect MCP client to `http://<host>:3000/mcp`
 
 ## Security notes
 
-- This release is read-only by design.
-- Secrets are read from environment variables; do not commit `.env`.
-- Error responses are structured for clients but avoid intentional secret exposure.
-
-## Known limitations
-
-- Ninja API pagination models vary by endpoint; tools normalize only the included v1 endpoints.
-- The OpenAPI source does not define `servers`, so `NINJA_BASE_URL` must be set correctly per tenant/environment.
+- Keep `.env` out of Git.
+- Use TLS and access controls for internet-facing deployments.
+- This server is read-only by design.
