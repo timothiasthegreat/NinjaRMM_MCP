@@ -234,12 +234,14 @@ export class NinjaClient {
         body.set("client_id", clientId);
         body.set("client_secret", clientSecret);
 
-        if (this.oauthScope) {
-          body.set("scope", this.oauthScope);
+        const scope = normalizeOptionalTokenParam(this.oauthScope);
+        if (scope) {
+          body.set("scope", scope);
         }
 
-        if (this.oauthAudience) {
-          body.set("audience", this.oauthAudience);
+        const audience = normalizeOptionalTokenParam(this.oauthAudience);
+        if (audience) {
+          body.set("audience", audience);
         }
 
         sanitizedRequestBody = getSanitizedOauthRequestBody(body);
@@ -404,13 +406,28 @@ function toLoggableDetails(details: unknown): unknown {
 }
 
 function getSanitizedOauthRequestBody(body: URLSearchParams): Record<string, string> {
-  return {
+  const sanitizedBody: Record<string, string> = {
     grant_type: body.get("grant_type") ?? "",
     client_id: body.get("client_id") ?? "",
     client_secret: "[REDACTED]",
-    scope: body.get("scope") ?? "",
-    audience: body.get("audience") ?? "",
   };
+
+  const scope = body.get("scope");
+  if (scope) {
+    sanitizedBody.scope = scope;
+  }
+
+  const audience = body.get("audience");
+  if (audience) {
+    sanitizedBody.audience = audience;
+  }
+
+  return sanitizedBody;
+}
+
+function normalizeOptionalTokenParam(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : undefined;
 }
 
 function safeTokenHost(tokenUrl: string): string {
